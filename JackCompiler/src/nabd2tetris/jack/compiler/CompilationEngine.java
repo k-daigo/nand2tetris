@@ -2,6 +2,7 @@ package nabd2tetris.jack.compiler;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -299,13 +300,6 @@ public class CompilationEngine {
 		// debug
 		vmWriter.writeComment(symbolTableSub.toString());
 
-		// vmcode
-		//		for (String varName : varList) {
-		//			vmWriter.writeComment("var " + varName);
-		//			SymbolTable symbolTable = getSymbolSubTable(varName);
-		//			vmWriter.writePush(Segment.LOCAL, symbolTable.indexOf(varName));
-		//		}
-
 		// statements
 		compileStatements(bw);
 
@@ -465,13 +459,22 @@ public class CompilationEngine {
 		String varName = token.getIdentifire();
 		outputTag(bw, token.getTokenType().getString(), varName);
 
-		// symbol [
+		// 配列
+		boolean isArray = false;
 		if ("[".equals(peekNextToken().getSymbol())) {
+			isArray = true;
+
 			// symbol [
 			token = getNextToken();
 			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
 
 			compileExpression(bw);
+
+			// vmcode
+			// 配列アクセス
+			Symbol symbol = getSymbol(varName);
+			vmWriter.writePush(kind2segment(symbol.kind), symbol.index);
+			vmWriter.writeArithmetic("add");
 
 			// symbol ]
 			token = getNextToken();
@@ -491,14 +494,26 @@ public class CompilationEngine {
 
 		// vmcode
 		vmWriter.writeComment("let " + varName);
-		boolean isSubroutineSymbol = isSubroutineSymbol(varName);
-		SymbolTable symbolTable = symbolTableClass;
-		if (isSubroutineSymbol) {
-			symbolTable = symbolTableSub;
+
+		// 配列への代入の場合は、POINTER、THAT経由で指定配列に格納
+		if (isArray) {
+			vmWriter.writePop(Segment.TEMP, 0);
+			vmWriter.writePop(Segment.POINTER, 1);
+			vmWriter.writePush(Segment.TEMP, 0);
+			vmWriter.writePop(Segment.THAT, 0);
 		}
-		int index = symbolTable.indexOf(varName);
-		Segment segment = kind2segment(symbolTable.kindOf(varName));
-		vmWriter.writePop(segment, index);
+
+		// 配列以外は当該変数に直接代入
+		else {
+			boolean isSubroutineSymbol = isSubroutineSymbol(varName);
+			SymbolTable symbolTable = symbolTableClass;
+			if (isSubroutineSymbol) {
+				symbolTable = symbolTableSub;
+			}
+			int index = symbolTable.indexOf(varName);
+			Segment segment = kind2segment(symbolTable.kindOf(varName));
+			vmWriter.writePop(segment, index);
+		}
 
 		outputTag(bw, "/letStatement");
 	}
@@ -579,10 +594,10 @@ public class CompilationEngine {
 
 		// vmcode
 		// if終了のgoto
-//		String endIfLabel = "L" + (++labelIndex);
-//		String endIfLabel = "IF_TRUE" + getNextLabelIndex("IF_TRUE");
-//		vmWriter.writeComment("else");
-//		vmWriter.writeGoto(endIfLabel);
+		//		String endIfLabel = "L" + (++labelIndex);
+		//		String endIfLabel = "IF_TRUE" + getNextLabelIndex("IF_TRUE");
+		//		vmWriter.writeComment("else");
+		//		vmWriter.writeGoto(endIfLabel);
 
 		// vmcode
 		// else or if終了開始
@@ -613,7 +628,7 @@ public class CompilationEngine {
 		// vmcode
 		// if終了
 		vmWriter.writeComment("end if");
-//		vmWriter.writeLabel(endIfLabel);
+		//		vmWriter.writeLabel(endIfLabel);
 
 		outputTag(bw, "/ifStatement");
 	}
@@ -824,7 +839,7 @@ public class CompilationEngine {
 				vmWriter.writeComment("push this");
 				vmWriter.writePush(Segment.POINTER, 0);
 				nArgs++;
-				isInstanceMethodCall= true;
+				isInstanceMethodCall = true;
 			}
 
 			// xxx()
@@ -832,7 +847,7 @@ public class CompilationEngine {
 				vmWriter.writeComment("push this");
 				vmWriter.writePush(Segment.POINTER, 0);
 				nArgs++;
-				isInstanceMethodCall= true;
+				isInstanceMethodCall = true;
 			}
 
 			String callTarget = "";
@@ -942,6 +957,9 @@ public class CompilationEngine {
 		else if (Const.TOKEN_TYPE.STRING_CONST == peekNextToken().getTokenType()) {
 			Token token = getNextToken();
 			outputTag(bw, token.getTokenType().getString(), token.getStringVal());
+
+			// vmcode
+			writeString(token.getStringVal());
 		}
 
 		// keywordConstant
@@ -981,6 +999,14 @@ public class CompilationEngine {
 				// symbol [
 				token = getNextToken();
 				outputTag(bw, token.getTokenType().getString(), token.getSymbol());
+
+				compileExpression(bw);
+
+				Symbol symbol = getSymbol(varOrSubName);
+				vmWriter.writePush(kind2segment(symbol.kind), symbol.index);
+				vmWriter.writeArithmetic("add");
+				vmWriter.writePop(Segment.POINTER, 1);
+				vmWriter.writePush(Segment.THAT, 0);
 
 				// symbol ]
 				token = getNextToken();
@@ -1164,10 +1190,6 @@ public class CompilationEngine {
 		bw.append("<" + tag + "> " + val + " </" + tag + ">\r\n");
 	}
 
-	private void outputCode(BufferedWriter bw, String code) throws IOException {
-		bw.append(code + "\r\n");
-	}
-
 	private void outputComment(BufferedWriter bw, String comment) throws IOException {
 		bw.append("<!-- " + comment + " -->\r\n");
 	}
@@ -1212,9 +1234,9 @@ public class CompilationEngine {
 
 	}
 
-	private int getNextLabelIndex(String labelBase){
+	private int getNextLabelIndex(String labelBase) {
 		int index;
-		if(labelIndexMap.containsKey(labelBase)){
+		if (labelIndexMap.containsKey(labelBase)) {
 			index = labelIndexMap.get(labelBase);
 			index++;
 		} else {
@@ -1223,5 +1245,19 @@ public class CompilationEngine {
 
 		labelIndexMap.put(labelBase, index);
 		return index;
+	}
+
+	private void writeString(String str) throws UnsupportedEncodingException {
+		// vmcode
+		int strLen = str.length();
+		vmWriter.writePush(Segment.CONST, strLen); // 文字列長
+		vmWriter.writeCall("String.new", 1); // String.new(strLen)
+
+		// 文字列をACSIIでばらしてString.appendCharに渡す
+		byte[] asciiCodes = str.getBytes("US-ASCII");
+		for (int ii = 0; ii < asciiCodes.length; ii++) {
+			vmWriter.writePush(Segment.CONST, asciiCodes[ii]);
+			vmWriter.writeCall("String.appendChar", 2);
+		}
 	}
 }
