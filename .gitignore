@@ -2,3 +2,11 @@
 .metadata/*
 .recommenders/*
 */bin/*
+JackCompiler/.classpath
+JackCompiler/.settings/org.eclipse.jdt.core.prefs
+Assembler/.classpath
+Assembler/.settings/org.eclipse.jdt.core.prefs
+VMtranslator/.classpath
+VMtranslator/.settings/org.eclipse.jdt.core.prefs
+VMtranslator8/.classpath
+VMtranslator8/.settings/org.eclipse.jdt.core.prefs
