@@ -15,6 +15,12 @@ public class SymbolTable {
 		return identiferMap.size();
 	}
 
+	public int getSizeWithoutStatic() {
+		return (int) identiferMap.entrySet().stream()
+				.filter(value -> !"static".equals(value.getValue().kind))
+				.count();
+	}
+
 	public void define(String name, String type, String kind) {
 		int index = varCount(kind);
 		identiferMap.put(name, new Symbol(name, type, kind, index));

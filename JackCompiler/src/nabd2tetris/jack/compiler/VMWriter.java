@@ -43,6 +43,7 @@ public class VMWriter {
 		opMap.put(">", "gt");
 		opMap.put("=", "eq");
 		opMap.put("&", "and");
+		opMap.put("|", "or");
 	}
 
 	private PrintWriter pw;

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import nabd2tetris.Const;
+import nabd2tetris.Const.KEYWORD_TYPE;
 import nabd2tetris.jack.compiler.SymbolTable.Symbol;
 import nabd2tetris.jack.compiler.VMWriter.Segment;
 import nabd2tetris.jack.tokenizer.Token;
@@ -170,6 +171,9 @@ public class CompilationEngine {
 		Token token = getNextToken();
 		outputTag(bw, token.getTokenType().getString(), token.getKeyword().getString());
 		Const.KEYWORD_TYPE subroutineType = token.getKeyword();
+		if (KEYWORD_TYPE.METHOD == subroutineType) {
+			symbolTableSub.define("this", className, "argument");
+		}
 
 		// keyword ("void" | type)
 		if (peekNextToken().getTokenType() == Const.TOKEN_TYPE.KEYWORD) {
@@ -281,15 +285,16 @@ public class CompilationEngine {
 		// コンストラクタの場合は、メモリ割り当てを行う
 		if (Const.KEYWORD_TYPE.CONSTRUCTOR == subroutineType) {
 			// vmcode
-			vmWriter.writePush(Segment.CONST, symbolTableClass.getSize());
+			vmWriter.writePush(Segment.CONST, symbolTableClass.getSizeWithoutStatic());
 			vmWriter.writeCall("Memory.alloc", 1);
 			vmWriter.writePop(Segment.POINTER, 0);
 		}
 
-		// thisの設定（コンストラクタ以外は）
-		// Main.mainもハードコーディングで回避
+		// constractとfunction以外の場合はthisの設定
+		//		if (Const.KEYWORD_TYPE.CONSTRUCTOR != subroutineType
+		//				&& !"Main".equals(className) && !"main".equals(subroutineName)) {
 		if (Const.KEYWORD_TYPE.CONSTRUCTOR != subroutineType
-				&& !"Main".equals(className) && !"main".equals(subroutineName)) {
+				&& Const.KEYWORD_TYPE.FUNCTION != subroutineType) {
 			vmWriter.writePush(Segment.ARG, 0);
 			vmWriter.writePop(Segment.POINTER, 0);
 		}
@@ -539,6 +544,10 @@ public class CompilationEngine {
 		token = getNextToken();
 		outputTag(bw, token.getTokenType().getString(), token.getSymbol());
 
+		// 戻り値の空読み
+		vmWriter.writeComment("get return val");
+		vmWriter.writePop(Segment.TEMP, 0);
+
 		outputTag(bw, "/doStatement");
 	}
 
@@ -572,10 +581,11 @@ public class CompilationEngine {
 		// if判定
 		vmWriter.writeComment("if condition judge");
 		String ifTrueLabel = "IF_TRUE" + getNextLabelIndex("IF_TRUE");
+		String ifFalseLabel = "IF_FALSE" + getNextLabelIndex("IF_FALSE");
+		String ifEndLabel = "IF_END" + getNextLabelIndex("IF_END");
 		vmWriter.writeIf(ifTrueLabel);
 
 		// falseはジャンプ
-		String ifFalseLabel = "IF_FALSE" + getNextLabelIndex("IF_FALSE");
 		vmWriter.writeGoto(ifFalseLabel);
 
 		// ここからtrue
@@ -593,19 +603,19 @@ public class CompilationEngine {
 		outputTag(bw, token.getTokenType().getString(), token.getSymbol());
 
 		// vmcode
-		// if終了のgoto
-		//		String endIfLabel = "L" + (++labelIndex);
-		//		String endIfLabel = "IF_TRUE" + getNextLabelIndex("IF_TRUE");
-		//		vmWriter.writeComment("else");
-		//		vmWriter.writeGoto(endIfLabel);
-
-		// vmcode
 		// else or if終了開始
+
+		// elseが存在する場合はIF_ENDラベルを生成して、else部分をジャンプ可能とする
+		boolean existsElse = false;
+		if (peekNextToken().getKeyword() == Const.KEYWORD_TYPE.ELSE) {
+			existsElse = true;
+			vmWriter.writeGoto(ifEndLabel);
+		}
+
 		vmWriter.writeLabel(ifFalseLabel);
 
 		while (true) {
 			if (!(peekNextToken().getKeyword() == Const.KEYWORD_TYPE.ELSE)) {
-
 				break;
 			}
 
@@ -617,7 +627,7 @@ public class CompilationEngine {
 			token = getNextToken();
 			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
 
-			// expressions
+			// statements
 			compileStatements(bw);
 
 			// symbol }
@@ -628,7 +638,9 @@ public class CompilationEngine {
 		// vmcode
 		// if終了
 		vmWriter.writeComment("end if");
-		//		vmWriter.writeLabel(endIfLabel);
+		if (existsElse) {
+			vmWriter.writeLabel(ifEndLabel);
+		}
 
 		outputTag(bw, "/ifStatement");
 	}
@@ -817,55 +829,53 @@ public class CompilationEngine {
 		if ("(".equals(peekNextToken().getSymbol())) {
 			String methodName = callTargetName;
 
-			// symbol (
-			Token token = getNextToken();
-			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
-
-			// expressionList
-			int nArgs = compileExpressionList(bw);
-
-			// symbol )
-			token = getNextToken();
-			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
-
 			// vmcode
 			// コンストラクラ以外はthisも渡す
 			// 認識済みでないシンボルはstaticコールと見なす
 			Symbol symbol = getSymbol(className);
 			boolean isExitsThis = isExitsThis();
 			boolean isInstanceMethodCall = false;
+
+			int thisArg = 0;
+
 			// xxx.xxx()
 			if (symbol != null && isExitsThis) {
-				vmWriter.writeComment("push this");
-				vmWriter.writePush(Segment.POINTER, 0);
-				nArgs++;
+				vmWriter.writeComment("push instance");
+				//				vmWriter.writePush(Segment.POINTER, 0);
+				vmWriter.writePush(kind2segment(symbol.kind), symbol.index);
+				thisArg = 1;
 				isInstanceMethodCall = true;
 			}
 
 			// xxx()
 			else if (className == null && isExitsThis) {
-				vmWriter.writeComment("push this");
+				vmWriter.writeComment("push instance");
 				vmWriter.writePush(Segment.POINTER, 0);
-				nArgs++;
+				thisArg = 1;
 				isInstanceMethodCall = true;
 			}
 
+			// symbol (
+			Token token = getNextToken();
+			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
+
+			// expressionList
+			int nArgs = compileExpressionList(bw) + thisArg;
+
+			// symbol )
+			token = getNextToken();
+			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
+
 			String callTarget = "";
-			if (className == null) {
+			if (symbol != null) {
+				callTarget = symbol.type + "." + methodName;
+			} else if (className == null) {
 				String targetClassName = symbolTableSub.typeOf("this");
 				callTarget = targetClassName + "." + methodName;
 			} else {
 				callTarget = className + "." + methodName;
 			}
 			vmWriter.writeCall(callTarget, nArgs);
-
-			// 戻り値の空読み
-			// コンストラクラの場合は空読みしない
-			// staticメソッドも空読みしない
-			if (!"new".equals(methodName) && isInstanceMethodCall) {
-				vmWriter.writeComment("get " + callTarget + " return val");
-				vmWriter.writePop(Segment.TEMP, 0);
-			}
 		}
 
 		// className | varName call
@@ -885,48 +895,44 @@ public class CompilationEngine {
 			token = getNextToken();
 			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
 
-			// expressionList
-			int nArgs = compileExpressionList(bw);
-
-			// symbol )
-			token = getNextToken();
-			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
-
 			// vmcode
-			//			vmWriter.writeComment("push this");
-			//			vmWriter.writePush(Segment.LOCAL, 0); // this
 			Symbol symbol = getSymbol(classOrVarName);
 			String targetClassName = symbolTableSub.typeOf(classOrVarName);
 			String callTarget = "";
 
 			// vmcode
+			int thisArg = 0;
 			// シンボルテーブルに存在しないクラス名はスタティック呼び出し
-			if (targetClassName == null) {
+			if (symbol == null) {
+				callTarget = classOrVarName + "." + callSubroutineName;
+			}
 
-				// 非staitcコール
-				if (symbol != null) {
+			// 非static
+			else {
+				thisArg = 1;
+
+				// LOCAL系
+				if ("var".equals(symbol.kind)) {
+					callTarget = targetClassName + "." + callSubroutineName;
+					vmWriter.writeComment("push this");
+					vmWriter.writePush(Segment.LOCAL, symbol.index);
+				}
+
+				else {
 					callTarget = symbol.type + "." + callSubroutineName;
 					vmWriter.writeComment("push this");
-					vmWriter.writePush(Segment.THIS, 0);
-					nArgs++;
+					vmWriter.writePush(Segment.THIS, symbol.index);
 				}
-
-				// staticコール
-				else {
-					callTarget = classOrVarName + "." + callSubroutineName;
-
-				}
-			} else {
-				vmWriter.writeComment("push this");
-				vmWriter.writePush(Segment.LOCAL, 0);
-				callTarget = targetClassName + "." + callSubroutineName;
-				nArgs++;
 			}
-			vmWriter.writeCall(callTarget, nArgs);
 
-			// 戻り値の空読み
-			vmWriter.writeComment("get " + callTarget + " return val");
-			vmWriter.writePop(Segment.TEMP, 0);
+			// expressionList
+			int nArgs = compileExpressionList(bw) + thisArg;
+
+			// symbol )
+			token = getNextToken();
+			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
+
+			vmWriter.writeCall(callTarget, nArgs);
 		}
 
 	}
@@ -1230,8 +1236,8 @@ public class CompilationEngine {
 		if (symbol != null) {
 			return true;
 		}
-		return false;
 
+		return false;
 	}
 
 	private int getNextLabelIndex(String labelBase) {
