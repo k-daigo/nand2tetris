@@ -198,7 +198,7 @@ public class CompilationEngine {
 		outputTag(bw, token.getTokenType().getString(), token.getSymbol());
 
 		// parameterList
-		int nArgs = compileParameterList(bw);
+		compileParameterList(bw);
 
 		// symbol )
 		token = getNextToken();
@@ -228,7 +228,13 @@ public class CompilationEngine {
 
 			// keyword type
 			Token token = getNextToken();
-			String type = token.getKeyword().getString();
+			KEYWORD_TYPE keyword = token.getKeyword();
+			String type;
+			if (keyword == null) {
+				type = token.getIdentifire();
+			} else {
+				type = keyword.toString();
+			}
 			outputTag(bw, token.getTokenType().getString(), type);
 
 			// identifier varName
@@ -472,6 +478,9 @@ public class CompilationEngine {
 			// symbol [
 			token = getNextToken();
 			outputTag(bw, token.getTokenType().getString(), token.getSymbol());
+
+			// vmcode
+			vmWriter.writeComment("let " + varName + "[x]" + " compileExpression");
 
 			compileExpression(bw);
 
@@ -982,7 +991,7 @@ public class CompilationEngine {
 			}
 
 			// vmcode
-			writeBoolean(bw, keywordConst);
+			writeKeywordConstant(bw, keywordConst);
 		}
 
 		// varName | varName "[" exprettion "]" | subroutineCall
@@ -1098,11 +1107,13 @@ public class CompilationEngine {
 		outputTag(bw, "/term");
 	}
 
-	private void writeBoolean(BufferedWriter bw, String bool) {
+	private void writeKeywordConstant(BufferedWriter bw, String bool) {
 		if ("true".equals(bool)) {
 			vmWriter.writePush(Segment.CONST, 0);
 			vmWriter.writeArithmetic("not");
 		} else if ("false".equals(bool)) {
+			vmWriter.writePush(Segment.CONST, 0);
+		} else if ("null".equals(bool)) {
 			vmWriter.writePush(Segment.CONST, 0);
 		}
 	}
